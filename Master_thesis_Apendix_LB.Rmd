@@ -1,0 +1,1732 @@
+---
+title: "Master Thesis Apendix"
+author: "LeonardBaum"
+date: "2023-05-02"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+  word_document:
+    toc: no
+  pdf_document:
+    toc: no
+---
+  
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+```
+
+
+```{r, include = F}
+# Packages used in the code
+
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(reshape2)
+library(rdd)
+library(rddtools)
+library(rdrobust)
+library(stringr)
+library(gridExtra)
+library(stargazer)
+library(lmtest)
+```
+
+
+<div class = "answer">
+<h2> **Creating the DATA SET**</h2>
+>In a first step the financial data from Chinese firms was downloaded from Bloomberg and uploaded in R. It includes all firms with the country of domicile being China that were part of the following GICS subindustries:
+IT Consulting & Other Services (GICS 45102010),
+Data Processing & Outsourced Services (GICS 45102020),
+Internet Services & Infrastructure (GICS 45102030),
+Application Software (GICS 45103010),
+Systems Software (GICS 45103020),
+Communications Equipement (GICS 45201020),
+Technology Hardware, Storage & Peripherals (GICS 45202030),
+Electronic Equipment & Instruments (GICS 45203010),
+Electronic Components (GICS 45203015),
+Electronic Manufacturing Services (GICS 45203020),
+Technology Distributors (GICS 45203030), 
+Internet & Direct Marketing Retail (GICS 25502020), 
+Interactive Media & Services (GICS 50203010) and 
+Movies & Entertainment (GICS 50202010
+>
+>The following information for 16 calendar quarters (Q1 2019 -Q4 2022) was collected: (1) GICS codes at the Subindustry level, (2) average market cap, (3) revenue and (4) profits as measured by earnings before interest and taxes (EBIT), (6) currency and (7) their financial market ticker as a unique identifier. 
+>
+> The data sets were uloaded piece by piece due to size limits and then joined by a unique identifier. 
+</div>
+
+```{r, fig.align="center"}
+
+
+### importing datasets
+setwd("~/Desktop/Masterarbeit/Data/R_Master")
+
+
+
+#currency + GICS
+
+GICS_Cur_Exc <- read_excel("~/Desktop/Masterarbeit/Data/Actual_Data/Leonard_Baum/Data/GICS_Currency_Exchange_onlyfirms.xlsx")
+
+
+#market cap
+
+MC1920 <- read_excel("~/Desktop/Masterarbeit/Data/Actual_Data/Leonard_Baum/Data/Calender_Quarter/MarketCAP_qrt16,9_01012023_onlyfirms.xlsx")
+
+
+MC2122 <- read_excel("~/Desktop/Masterarbeit/Data/Actual_Data/Leonard_Baum/Data/Calender_Quarter/MarketCAP_qrt8,1_01012023_onlyfirms.xlsx")
+
+
+#revenue
+
+Rev1920 <- read_excel("~/Desktop/Masterarbeit/Data/Actual_Data/Leonard_Baum/Data/Calender_Quarter/Revenue_qrt16,9_01012023_onlyfirms.xlsx")
+
+Rev2122 <- read_excel("~/Desktop/Masterarbeit/Data/Actual_Data/Leonard_Baum/Data/Calender_Quarter/Revenue_qrt8,1_01012023_onlyfirms.xlsx")
+
+#IBIT
+
+IBIT1920 <- read_excel("~/Desktop/Masterarbeit/Data/Actual_Data/Leonard_Baum/Data/Calender_Quarter/IBIT_qrt16,9_01012023_onlyfirms.xlsx")
+
+IBIT2122 <- read_excel("~/Desktop/Masterarbeit/Data/Actual_Data/Leonard_Baum/Data/Calender_Quarter/IBIT_qrt8,1_01012023_onlyfirms.xlsx")
+
+  
+  ### joining data sets 1 by 1
+  
+  df2<- full_join(GICS_Cur_Exc, MC1920, by = "Ticker")
+df3<- full_join(df2, MC2122, by = "Ticker")
+df4<- full_join(df3, Rev1920, by = "Ticker")
+df5<- full_join(df4, Rev2122, by = "Ticker")
+df6<- full_join(df5, IBIT1920, by = "Ticker")
+dffull<- full_join(df6, IBIT2122, by = "Ticker")
+
+
+```
+
+
+
+<div class = "answer">
+<h2> **Converting data to USD**</h2>
+>In a second step the spot exchanged rates were added and all values were converted to USD.
+In order to achieve that the data set was first filtered for firms without values for currency (2 columns were excluded that missed not only currency but almost all necessary data including  names  (688496 CH Equity, 301379)). Attached below is an overview over the missing financial information in the data set and the variable names used in the analysis.
+</div>
+
+```{r, fig.align="center"}
+
+#Dropping rows with NAs for currency
+
+dffull <- dffull %>% drop_na(Curncy)
+
+#changing data from wide to long
+df_long <- dffull %>%
+  pivot_longer(cols = starts_with("Market Cap:") | starts_with("Revenue:") | starts_with("EBIT:"),
+               names_to = c("Variable", "Quarter"),
+               names_sep = ":") %>%
+  pivot_wider(names_from = "Variable",
+              values_from = "value")
+
+
+##### joining official exchange rates by quarter 
+
+exch_rate <- read_excel("~/Desktop/Masterarbeit/Data/Actual_Data/Leonard_Baum/Data/Calender_Quarter/Exchange_rates_formated.xlsx")
+
+dflong_1 <- left_join(df_long, exch_rate, by = c('Quarter'))
+
+###renaming Market Cap to Market_CAP
+dflong_1 <- dplyr::rename(dflong_1, Market_Cap = "Market Cap")
+
+
+
+###calculating USD values for Market_CAP, Revenue and EBIT
+
+
+df_adj <- dflong_1 %>%
+  mutate(Adj_Market_Cap = if_else(Curncy == "USD", Market_Cap,
+                                  if_else(Curncy == "CNY", Market_Cap * Exch_CNY,
+                                          if_else(Curncy == "HKD", Market_Cap * Exch_HKD,
+                                                  if_else(Curncy == "TWD", Market_Cap * Exch_TWD,
+                                                          if_else(Curncy == "SGD", Market_Cap * Exch_SGD,
+                                                                  if_else(Curncy == "AUD", Market_Cap * Exch_AUD, NA_real_)))))),
+         Adj_Revenue = if_else(Curncy == "USD", Revenue,
+                               if_else(Curncy == "CNY", Revenue * Exch_CNY,
+                                       if_else(Curncy == "HKD", Revenue * Exch_HKD,
+                                               if_else(Curncy == "TWD", Revenue * Exch_TWD,
+                                                       if_else(Curncy == "SGD", Revenue * Exch_SGD,
+                                                               if_else(Curncy == "AUD", Revenue * Exch_AUD, NA_real_)))))),
+         Adj_EBIT = if_else(Curncy == "USD", EBIT,
+                            if_else(Curncy == "CNY", EBIT * Exch_CNY,
+                                    if_else(Curncy == "HKD", EBIT * Exch_HKD,
+                                            if_else(Curncy == "TWD", EBIT * Exch_TWD,
+                                                    if_else(Curncy == "SGD", EBIT * Exch_SGD,
+                                                            if_else(Curncy == "AUD", EBIT * Exch_AUD, NA_real_)))))))   
+
+# re-transform the relevant data back to a wide format
+
+df_sel <- df_adj %>% select(1:3,6,15:17)
+
+df_wide <- df_sel %>%
+  pivot_wider(names_from = Quarter,
+              values_from = c(Adj_Market_Cap, Adj_Revenue, Adj_EBIT))
+
+# renaming the variables in preperation for the data analysis
+
+# get list of variable names
+var_names <- names(df_wide)
+
+for (i in 1:length(var_names)) {
+  if (grepl("Adj_Market_Cap_Q", var_names[i])) {
+    new_name <- paste0("MC_Q", abs(as.numeric(gsub("[^0-9]", "", var_names[i]))-16)+1)
+    names(df_wide)[i] <- new_name
+  }
+  if (grepl("Adj_Revenue_Q", var_names[i])) {
+    new_name <- paste0("Rev_Q", abs(as.numeric(gsub("[^0-9]", "", var_names[i]))-16)+1)
+    names(df_wide)[i] <- new_name
+  }
+  if (grepl("Adj_EBIT_Q", var_names[i])) {
+    new_name <- paste0("EBIT_Q", abs(as.numeric(gsub("[^0-9]", "", var_names[i]))-16)+1)
+    names(df_wide)[i] <- new_name
+  }
+}
+#renaming variable subindustry
+df_wide <- dplyr::rename(df_wide, GICS_SubInd = "GICS SubInd")
+
+#turning GICS Subindustry into character variable
+df_wide$GICS_SubInd <- as.character(df_wide$GICS_SubInd)
+
+# check new variable names
+names(df_wide)
+
+# count the number of NAs by variable
+na_counts <- colSums(is.na(df_wide))
+na_counts 
+
+```
+
+
+<div class = "answer">
+<h2> **Calculating Concentration Measures**</h2>
+>In the next step the four concentration measures - HHI Market Cap, CR4 Market Cap, HHI Revenue CR4 Revenue - were calculated for the 16 GICS subindsutries with the amount of firms ranging from 8 to 177 per market. The graphs below provides a graphical illustration of the development of the different market concentration measures – HHI Revenue, CR4 Revenue, HHI Market Cap, CR4 Market Cap – over the 16 quarters. The dotted line perpendicular to quarter 8 represents the cutoff point that delineates the time before and after the new regulatory approach took effect. For the two-revenue based concentration measures it is difficult to detect any pattern around the cutoff. This is different for the concentration measures based on market capitalization. The CR4 MC graph shows a general decrease in market concentration during the treatment period with the notable exception of the most concentrated markets. Meanwhile the more comprehensive HHI MC measure shows a sharp decline shortly after the cutoff for the two most concentrated markets (GICS 50203010: Interactive Media & Services; GICS 25502020: Internet & Direct Marketing Retail), while no substantial changes can be observed for the large number of low concentrated market. 
+</div>
+
+```{r, fig.align="center"}
+### calculating HHI
+
+# n_distinct(df_wide$GICS_SubInd)
+###we have 16 different GICS subindustries
+table(df_wide$GICS_SubInd)
+#with the amount of firms ranging from 8 to 177 per sub-industry.
+
+# create a list of unique GICS subindustries
+subindustries <- unique(df_wide$GICS_SubInd)
+
+for (q in 1:16) {
+  for (sub in subindustries) {
+    # subset the data for the current quarter and subindustry
+    subset_data <- df_wide[, c("GICS_SubInd", paste0("Rev_Q", q))]
+    subset_data <- subset_data[subset_data$GICS_SubInd == sub,]
+    
+    # calculate the total revenue in the subindustry, ignoring NAs
+    total_revenue <- sum(subset_data[, 2], na.rm = TRUE)
+    
+    # calculate the market share of each firm in the subindustry, ignoring NAs
+    subset_data$market_share <- subset_data[, 2] / total_revenue
+    
+    # calculate the squared market share of each firm and sum them up
+    subset_data$squared_market_share <- subset_data$market_share^2
+    hhi <- sum(subset_data$squared_market_share, na.rm = TRUE)
+    
+    # assign the HHI value to the corresponding column and row in the original data
+    col_name <- paste0("HHIRev_SubInd_Q", q)
+    df_wide[df_wide$GICS_SubInd == sub, col_name] <- hhi
+  }
+}
+
+#Calculating the CR4 Concentration Ratio
+
+for (q in 1:16) {
+  for (sub in subindustries) {
+    # subset the data for the current quarter and subindustry
+   
+    subset_data <- df_wide[, c("GICS_SubInd", paste0("Rev_Q", q))]
+    subset_data <- subset_data[subset_data$GICS_SubInd == sub,]
+    
+    # calculate the market share of each firm in the subindustry, ignoring NAs
+    subset_data$market_share <- subset_data[, 2] / sum(subset_data[, 2], na.rm = TRUE)
+    
+    # select the market shares of the four largest firms, ignoring NAs
+    top_four <- head(subset_data[order(subset_data$market_share, decreasing = TRUE), "market_share"], 4)
+    
+    # calculate the CR4
+    cr4 <- sum(top_four, na.rm = TRUE)
+    
+    # assign the CR4 value to the corresponding column and row in the original data
+    col_name <- paste0("CR4Rev_Subind_Q", q)
+    df_wide[df_wide$GICS_SubInd == sub, col_name] <- cr4
+  }
+}
+
+
+#Calculating the concentration measures for Market CAP 
+
+for (q in 1:16) {
+  for (sub in subindustries) {
+    # subset the data for the current quarter and subindustry
+    subset_data <- df_wide[, c("GICS_SubInd", paste0("MC_Q", q))]
+    subset_data <- subset_data[subset_data$GICS_SubInd == sub,]
+    
+    # calculate the total revenue in the subindustry, ignoring NAs
+    total_MC <- sum(subset_data[, 2], na.rm = TRUE)
+    
+    # calculate the market share of each firm in the subindustry, ignoring NAs
+    subset_data$MC_share <- subset_data[, 2] / total_MC
+    
+    # calculate the squared market share of each firm and sum them up
+    subset_data$squared_MC_share <- subset_data$MC_share^2
+    hhiMC <- sum(subset_data$squared_MC_share, na.rm = TRUE)
+    
+    # assign the HHI value to the corresponding column and row in the original data
+    col_name <- paste0("HHIMC_SubInd_Q", q)
+    df_wide[df_wide$GICS_SubInd == sub, col_name] <- hhiMC
+  }
+}
+
+#Calculating the CR4 Concentration Ratio for MC
+
+for (q in 1:16) {
+  for (sub in subindustries) {
+    # subset the data for the current quarter and subindustry
+    
+    subset_data <- df_wide[, c("GICS_SubInd", paste0("MC_Q", q))]
+    subset_data <- subset_data[subset_data$GICS_SubInd == sub,]
+    
+    # calculate the market share of each firm in the subindustry, ignoring NAs
+    subset_data$MC_share <- subset_data[, 2] / sum(subset_data[, 2], na.rm = TRUE)
+    
+    # select the market shares of the four largest firms, ignoring NAs
+    top_four <- head(subset_data[order(subset_data$MC_share, decreasing = TRUE), "MC_share"], 4)
+    
+    # calculate the CR4
+    cr4_MC <- sum(top_four, na.rm = TRUE)
+    
+    # assign the CR4 value to the corresponding column and row in the original data
+    col_name <- paste0("CR4MC_Subind_Q", q)
+    df_wide[df_wide$GICS_SubInd == sub, col_name] <- cr4_MC
+  }
+}
+
+#First we create the data frames for the concentration measures
+
+# Step 1:  HHI Revenue values per quarter per subindsutry
+
+# select columns for HHI (REV) and GICS_SubInd
+df_HHI <- df_wide %>%
+  select(GICS_SubInd, starts_with("HHIRev_SubInd_Q"))
+
+##dropping all non-unique values so I have each subindustry only once
+df_HHI <- df_HHI[!duplicated(df_HHI[, c("GICS_SubInd")]), ]
+
+# Melt the data frame into long format
+df_HHI_Rev <- melt(df_HHI, id.vars = "GICS_SubInd", variable.name = "Quarter", value.name = "HHI")
+
+# Convert the Quarter variable to numeric
+df_HHI_Rev$Quarter <- as.numeric(gsub("HHIRev_SubInd_Q", "", df_HHI_Rev$Quarter))
+
+# Plot the data using ggplot2
+ggplot(df_HHI_Rev, aes(x = Quarter, y = HHI, group = GICS_SubInd, color = GICS_SubInd)) +
+  geom_line() +
+  labs(x = "Quarter", y = "HHI", color = "GICS Subindustry") +
+  geom_vline(xintercept = 8, linetype = "dotted") +
+   ggtitle("HHI Revenue") +
+  theme_minimal()
+
+# we can see some encouraging albeit small drop-offs for several 
+#gics subindustries at Q8  which is our intended cut-off point for the RDD
+
+### Step 2: CR4 Revenue
+
+# select columns for CR4 (REV) and GICS_SubInd
+df_CR4 <- df_wide %>%
+  select(GICS_SubInd, starts_with("CR4Rev_SubInd_Q"))
+
+##dropping all non-unique values so I have each subindustry only once
+df_CR4 <- df_CR4[!duplicated(df_CR4[, c("GICS_SubInd")]), ]
+
+# Melt the data frame into long format
+df_CR4 <- melt(df_CR4, id.vars = "GICS_SubInd", variable.name = "Quarter", value.name = "CR4")
+
+# Convert the Quarter variable to numeric
+df_CR4$Quarter <- as.numeric(sub("CR4Rev_Subind_Q", "", df_CR4$Quarter))
+
+# Plot the data using ggplot2
+ggplot(df_CR4, aes(x = Quarter, y = CR4, group = GICS_SubInd, color = GICS_SubInd)) +
+  geom_line() +
+  labs(x = "Quarter", y = "CR4", color = "GICS Subindustry") +
+  geom_vline(xintercept = 8, linetype = "dotted") +
+   ggtitle("CR4 Revenue") +
+  theme_minimal()
+
+### Step 3 HHI MC
+#Create a new data frame with HHI (Market Cap) values per quarter per subindsutry
+
+# select columns for HHI (Market Cap) and GICS_SubInd
+df_HHIMC <- df_wide %>%
+  select(GICS_SubInd, starts_with("HHIMC_SubInd_Q"))
+
+##dropping all non-unique values so I have each subindustry only once
+df_HHIMC <- df_HHIMC[!duplicated(df_HHIMC[, c("GICS_SubInd")]), ]
+
+# Melt the data frame into long format
+df_HHIMC <- melt(df_HHIMC, id.vars = "GICS_SubInd", variable.name = "Quarter", value.name = "HHIMC")
+
+# Convert the Quarter variable to numeric
+df_HHIMC$Quarter <- as.numeric(sub("HHIMC_SubInd_Q", "", df_HHIMC$Quarter))
+
+# Plot the data using ggplot2
+ggplot(df_HHIMC, aes(x = Quarter, y = HHIMC, group = GICS_SubInd, color = GICS_SubInd)) +
+  geom_line() +
+  labs(x = "Quarter", y = "HHIMC", color = "GICS Subindustry") +
+  geom_vline(xintercept = 8, linetype = "dotted") +
+   ggtitle("HHI Market Cap") +
+  theme_minimal()
+##here we can see the sharp dropoffs after the regulatory approach for the 2 most concentrated markets
+
+# Step 4: CR4 Market Cap
+#Create a new data frame with HHI (Market Cap) values per quarter per subindsutry
+
+# select columns for CR4 (Market Cap) and GICS_SubInd
+df_CR4MC <- df_wide %>%
+  select(GICS_SubInd, starts_with("CR4MC_SubInd_Q"))
+
+##dropping all non-unique values so I have each subindustry only once
+df_CR4MC <- df_CR4MC[!duplicated(df_CR4MC[, c("GICS_SubInd")]), ]
+
+# Melt the data frame into long format
+df_CR4MC <- melt(df_CR4MC, id.vars = "GICS_SubInd", variable.name = "Quarter", value.name = "CR4MC")
+
+# Convert the Quarter variable to numeric
+df_CR4MC$Quarter <- as.numeric(sub("CR4MC_Subind_Q", "", df_CR4MC$Quarter))
+
+# Plot the data using ggplot2
+ggplot(df_CR4MC, aes(x = Quarter, y = CR4MC, group = GICS_SubInd, color = GICS_SubInd)) +
+  geom_line() +
+  labs(x = "Quarter", y = "CR4MC", color = "GICS Subindustry") +
+  geom_vline(xintercept = 8, linetype = "dotted") +
+   ggtitle("CR4 Market Cap") +
+  theme_minimal()
+
+```
+
+<div class = "answer">
+<h2> **Testing Hypothesis 1**</h2>
+>The first method of testing hypthesis 1 was a Regression Discontinuity Design. However, this did not produce significant results.
+For the regression discontinuity design, both revenue-based concentration measures portray a small negative treatment effect (HHI Rev -0.05 and CR4 Rev -0.037) that is not significant (p value HHI Rev = 0.968, p value CR4 Rev = 0.810). For the MC concentration measures the regression discontinuity also portrays a small negative treatment effect (HHI MC -0.009 and CR4 MC -0.008) with very high p values (p value HHI MC = 0.955, p value CR4 MC = 0.957). This can be attributed to the low number of observations at the market level. 16 GICS subindustries with 256 observation points in total are in the lower range of acceptable data quantity for RDDs. 
+</div>
+
+```{r, fig.align="center"}
+
+### Testing Hypothesis 1: Change in regulatory approach has led to reduced market concentration.
+
+# Method 1 RDD
+
+#First, RDD on HHI Rev
+# Create a binary treatment variable based on cutoff
+df_HHI_Rev$treatment <- ifelse(df_HHI_Rev$Quarter >= 9, 1, 0)
+
+
+# Specify variable names
+run_var <- df_HHI_Rev$Quarter
+treat_var <- df_HHI_Rev$treatment
+out_var <- df_HHI_Rev$HHI
+
+# Specify cutoff value
+cutoff <-   8
+
+
+rddHHI_results <- rdrobust(y = df_HHI_Rev$HHI, x = df_HHI_Rev$Quarter, c = cutoff,
+                          kernel = "tri", bwselect = "mserd", p = 1)
+
+summary(rddHHI_results)
+### no significant results, it is not even close.
+
+#Second CR4 Rev
+
+# Create a binary treatment variable based on cutoff
+df_CR4$treatment <- ifelse(df_CR4$Quarter >= 9, 1, 0)
+
+
+# Specify variable names
+run_var <- df_CR4$Quarter
+treat_var <- df_CR4$treatment
+out_var <- df_CR4$CR4
+
+# Specify cutoff value
+cutoff <-   8
+
+
+rddCR4_results <- rdrobust(y = df_CR4$CR4, x = df_CR4$Quarter, c = cutoff,
+                           kernel = "tri", bwselect = "mserd", p = 1)
+
+summary(rddCR4_results)
+## again no significance
+
+#third, HHI MC
+# Create a binary treatment variable based on cutoff
+df_HHIMC$treatment <- ifelse(df_HHIMC$Quarter >= 9, 1, 0)
+
+
+# Specify variable names
+run_var <- df_HHIMC$Quarter
+treat_var <- df_HHIMC$treatment
+out_var <- df_HHIMC$HHIMC
+
+# Specify cutoff value
+cutoff <-   8
+
+
+rddHHIMC_results <- rdrobust(y = df_HHIMC$HHIMC, x = df_HHIMC$Quarter, c = cutoff,
+                           kernel = "tri", bwselect = "mserd", p = 1)
+
+summary(rddHHIMC_results)
+#again small negative effect but not even close to being significan
+
+#fourth, CR4 MC
+
+# Create a binary treatment variable based on cutoff
+df_CR4MC$treatment <- ifelse(df_CR4MC$Quarter >= 9, 1, 0)
+
+##small negative effect (like the others) but also not significant
+
+
+# Specify variable names
+run_var <- df_CR4MC$Quarter
+treat_var <- df_CR4MC$treatment
+out_var <- df_CR4MC$CR4MC
+
+# Specify cutoff value
+cutoff <-   8
+
+
+rddCR4MC_results <- rdrobust(y = df_CR4MC$CR4MC, x = df_CR4MC$Quarter, c = cutoff,
+                             kernel = "tri", bwselect = "mserd", p = 1)
+
+summary(rddCR4MC_results)
+#also doesn't work
+```
+
+
+
+
+<div class = "answer">
+>As a second method a two way fixed effects model (controlling for Subindustry and Quarter) was employed to test Hypothesis 1. However, only the CR4 market cap model portrays a small but highly significant positive treatment effect (0.038440 with a p value of 0.00158). One can only speculate for the reasons of this result . But with the more comprehensive HHI measure not being significant and CR4 only considering the top 4 firms in a market, we cannot confirm the hypothesis that the new regulatory approach has reduced market concentration in China’s digital economy as a whole. 
+</div>
+
+
+```{r, fig.align="center"}
+
+
+#two way fixed effect model for all GICS subindustries
+
+# for HHIMC using df_HHIMC
+
+reg1 <- lm(HHIMC ~ GICS_SubInd + Quarter + treatment, data = df_HHIMC)
+
+
+# no statistically significant results for Treatment
+
+
+#for CR4MC using df_CR4MC
+
+reg2 <- lm(CR4MC ~ GICS_SubInd + Quarter + treatment, data = df_CR4MC)
+
+
+####significant results!
+#but it doesnt really make any sense since the treatment effect should be negative not positive????
+#maybe because it only takes into account the top 4 firms and they were not always hit equally it actually 
+#increased concentration among top 4 firms -->mere speculation 
+
+
+#now for HHI Revenue 
+
+reg3 <- lm(HHI ~ GICS_SubInd + Quarter + treatment, data = df_HHI_Rev)
+
+
+## no significant results
+
+
+# for CR4 Revenu using df_CR4
+reg4 <- lm(CR4 ~ GICS_SubInd + Quarter + treatment, data = df_CR4)
+
+### as expected no significance
+
+
+stargazer(reg1, reg2, reg3, reg4, title=" Two-way fixed effect model Treatment effect",type = "text")
+
+```
+
+
+<div class = "answer">
+>In a second, subsequent analysis, a subset of China’s digital economy built from the primary markets of the BATs was examined. Baidu and Tencent both belong to the Interactive Media & Services subindustry (GICS 50203010) while Alibaba belongs to the Internet & Direct Marketing Retail subindustry (GICS 25502020). A two-way fixed effects models yields a significant treatment effect for the HHI Market Cap model.Zooming in the HHI MC model we can see that, unsurprisingly, the GICS subindustry functions as a very strong predictor of the variance in HHI MC in a given market. Nevertheless, adding the treatment effect increased the adjusted R-Squared from 0,781 to 0.829 and, thus, represents a strong and significant predictor able to explain the decrease in market concentration following the new regulatory proposal.  
+</div>
+
+```{r, fig.align="center"}
+#Method 3. let's try to test the effect on BATs markets
+
+### creating a subset for the primary gics subindustries of the BATs
+
+dfBAT1 <- subset(df_HHIMC, GICS_SubInd %in% c("50203010", "25502020"))
+reg5 <- lm(HHIMC ~ GICS_SubInd + Quarter + treatment, data = dfBAT1)
+#significant treatment effect
+
+#let's plot it
+
+ggplot(dfBAT1, aes(x = Quarter, y = HHIMC, group = GICS_SubInd, color = GICS_SubInd)) +
+  geom_line() +
+  labs(x = "Quarter", y = "HHIMC", color = "GICS Subindustry") +
+  geom_vline(xintercept = 8, linetype = "dotted") +
+  ggtitle("HHI Market Cap") +
+  theme_minimal()
+
+
+#### Now let's do it for CR4
+
+dfBAT2 <- subset(df_CR4MC, GICS_SubInd %in% c("50203010", "25502020"))
+reg6 <- lm(CR4MC ~ GICS_SubInd + Quarter + treatment, data = dfBAT2)
+##not sifnificant
+
+#HHI Revenue
+
+dfBAT3 <- subset(df_HHI_Rev, GICS_SubInd %in% c("50203010", "25502020"))
+reg7 <- lm(HHI ~ GICS_SubInd + Quarter + treatment, data = dfBAT3)
+#not significant
+
+#CR4 Revenue
+
+dfBAT4 <- subset(df_CR4, GICS_SubInd %in% c("50203010", "25502020"))
+reg8 <- lm(CR4 ~ GICS_SubInd + Quarter + treatment, data = dfBAT4)
+### also not significant
+
+stargazer(reg5, reg6, reg7, reg8, title="Two-way fixed effects model BATs",type = "text")
+
+# only HHI MC has a significant treatment effect
+
+###zooming in one the significant HHI Market Cap model
+
+
+reg8a <- lm(HHIMC ~ GICS_SubInd , data = dfBAT1)
+
+reg8b <- lm(HHIMC ~ GICS_SubInd + Quarter , data = dfBAT1)
+
+reg8c <- lm(HHIMC ~ GICS_SubInd + Quarter + treatment, data = dfBAT1)
+
+stargazer(reg8a, reg8b, reg8c, title="Zoom in HHI MC Model",type = "text")
+
+
+
+
+```
+
+<div class = "answer">
+> In this chunk we do the robustness checks for the HHI MC model. First plot indicates that the regression model is linear. Just in case I played around with the Quarter variable checking if the treatment effect is still significant with Q^2 which it is. When testing with the studentized Breusch-Pagan test for heteroscedasticity we did not have sufficient evidence to reject the null hypothesis of homoscedasticity. However, the p-value is relatively close to 0.05, indicating that there may be a possibility of heteroscedasticity. The subsequent plot indicates that the data may be a bit heteroscedastic in the higher range of the predictor variable(s). However, as an additional robust check I rerun the regression while logging the dependant variable and the treatment effect remains significant. Further, the result of another studentized Breusch-Pagan test for the logged dependent variable suggests that there is no significant evidence of heteroscedasticity in the logged model.Lastly, plots show that the residuals as well as the error terms are normally distributed. A gap in the middle of the last plots indicates that there is a significant difference in the dependent variable between the treated and untreated groups, and this effect of the regulatory approach is not captured by the other variables in the model.
+In conclusion, the robustness checks confirm the validity of the traetment effect. While the model may not be perfectly linear, it passes all tests and the treatment effect persists in the robust models.
+</div>
+
+
+```{r, fig.align="center"}
+
+# Add predicted values to the data frame
+dfBAT1$predicted <- predict(reg8c)
+
+# Create line plot of actual and predicted values across quarters
+ggplot(data = dfBAT1, aes(x = Quarter, y = HHIMC, group = GICS_SubInd)) +
+  geom_line(aes(color = "Actual")) +
+  geom_line(aes(y = predicted, color = "Predicted")) +
+  scale_color_manual(values = c("Actual" = "black", "Predicted" = "red")) +
+  labs(x = "Quarter", y = "HHIMC", title = "Regression Model Performance")
+
+
+#### Linearity
+# Plotting fitted values against residuals
+plot(reg5, 1)
+#looks fine
+
+#just in case I will do an additional robust check and see if the effect holds if Quarter is not linear but quadratic
+
+r1 <- lm(HHIMC ~ GICS_SubInd + Quarter^2 + treatment, data = dfBAT1)
+summary(r1)
+#nothing changes, very good
+
+#### testing for homosecasticity
+
+
+bp_test <- bptest(reg5)
+bp_test
+#The studentized Breusch-Pagan test tests for heteroscedasticity in the errors of a linear regression model. The null hypothesis is that the errors are homoscedastic, while the alternative hypothesis is that they are heteroscedastic.At the 0.05 significance level, we do not have sufficient evidence to reject the null hypothesis of homoscedasticity. However, the p-value is relatively close to 0.05, indicating that there may be some evidence of heteroscedasticity. 
+
+plot(reg5, 3)
+# the slight diagonal drop  in the higher range of the fitted values is a bit worrying and suggests that the variance of the residuals is increasing, indicating that the data may be heteroscedastic in the higher range of the predictor variable(s).
+
+#as a check I will log the dependant variable
+
+r2 <- lm(log(HHIMC) ~ GICS_SubInd + Quarter + treatment, data = dfBAT1)
+summary(r2)
+#still significant
+bp_test_log <- bptest(r2)
+bp_test_log
+
+#The result of the studentized Breusch-Pagan test for the logged dependent variable suggests that there is no significant evidence of heteroscedasticity in the model.
+# Furter, even in the logged model the treatment effect was still significant and it is expected that our results are not perfectly linear.
+
+#### Normality of residuals ####
+plot(reg5, 2)
+## residuals are close to the diagonal line indicating a normal distribution
+
+plot(reg5$fitted.values, reg5$residuals)
+
+#looks  fairly randomly distributed and suggests that there is no pattern in the errors and the assumptions of the linear regression model are being met. This indicates also that the residuals are uncorrelated and have constant variance, which are two important assumptions of linear regression. 
+# The gap in the middle indicates that there is a significant difference in the dependent variable between the treated and untreated groups, and the treatment effect is not captured by the other variables in the model.
+
+#ok all in all everything seems robust!
+```
+
+
+
+<div class = "answer">
+>As a small extension I also checking whteher the treatment effect is also there when we include an additional GICS subindustry. In the data, there is also a comparatively small publicly traded Tencent Subsidiary called Tencent Music Entertainment which is part of the Movies & Entertainment subindustry (GICS 50202010). For claritiy (and consistency) this was exclueded from the main analysis, because none of the other numerous subsidiaries of the BATs have their own listing. As we can see, the tratment effect holds (again only for the HHI MC model),
+</div>
+
+
+```{r, fig.align="center"}
+#creating a subset with revelent subindustries (fo primary markets including tencent music: 50203010, 50202010,25502020)
+
+#HHI MC
+
+dfBAT5 <- subset(df_HHIMC, GICS_SubInd %in% c("50203010", "50202010", "25502020"))
+
+#let's plot it first
+
+ggplot(dfBAT5, aes(x = Quarter, y = HHIMC, group = GICS_SubInd, color = GICS_SubInd)) +
+  geom_line() +
+  labs(x = "Quarter", y = "HHIMC", color = "GICS Subindustry") +
+  geom_vline(xintercept = 8, linetype = "dotted") +
+  theme_minimal()
+
+
+reg9a <- lm(HHIMC ~ GICS_SubInd + Quarter + treatment, data = dfBAT5)
+#significant again
+
+#### Now let's do it for CR4
+
+dfBAT6 <- subset(df_CR4MC, GICS_SubInd %in% c("50203010", "50202010", "25502020"))
+reg9b <- lm(CR4MC ~ GICS_SubInd + Quarter + treatment, data = dfBAT6)
+##not sifnificant
+
+#HHI Revenue
+
+dfBAT7 <- subset(df_HHI_Rev, GICS_SubInd %in% c("50203010", "50202010", "25502020"))
+reg9c <- lm(HHI ~ GICS_SubInd + Quarter + treatment, data = dfBAT7)
+#not significant
+
+#CR4 Rev
+
+dfBAT8 <- subset(df_CR4, GICS_SubInd %in% c("50203010", "50202010", "25502020"))
+#not significant
+
+reg9d <- lm(CR4 ~ GICS_SubInd + Quarter + treatment, data = dfBAT8)
+### also not significant
+
+
+stargazer(reg9a, reg9b, reg9c, reg9d, title="BAT Model Including Tencent Music", type = "text")
+```
+
+
+<div class = "answer">
+<h2> **Testing Hypothesis 2: In the digital economy, market concentration does not serve as a good predictor of profits.**</h2>
+>The following models explore if market concentration can function as a predictor of profits in the digital economy by looking both at total profits and profit margins.
+Looking total profits by firm first, all concentration measures – HHI Rev, CR4 Rev, HHI MC, CR4 MC – have a positive and statistically significant relationship with EBIT. The crucial problem here for the concentration measures to be good predictor is that the R-squared values in the regression outputs are very low (R-squared of around 1 percent), indicating that the market concentration measures included in the model do not have a strong relationship with firms' profits and that other factors play a more important role.
+The low explanatory value holds true for a time-fixed model (controlling for Quarter) and a two-way fixed effects model (controlling additionally for GICS Subindustry).
+</div>
+
+
+```{r, fig.align="center"}
+### Testing hypothesis 2: Lower market concentration is correlated with a reduction in firm's profits
+
+# creating a new data set with market concentration measures and profits
+
+df_EBIT <- df_wide %>% select(2,3,36:115)
+
+#creating different data sets per market concentration measures 
+
+df_EBIT_long <- df_EBIT %>%
+  pivot_longer(
+    cols = starts_with("EBIT_Q"),
+    names_to = "Quarter",
+    values_to = "EBIT"
+  ) %>%
+  select(Name, GICS_SubInd, Quarter, EBIT)
+
+df_EBIT_long$Quarter <- as.numeric(sub("EBIT_Q", "", df_EBIT_long$Quarter))
+
+df_HHIRev_long <- df_EBIT %>%
+  pivot_longer(
+    cols = starts_with("HHIRev_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "HHIRev"
+  )  %>%
+  select(Name, GICS_SubInd, Quarter, HHIRev)
+
+df_HHIRev_long$Quarter <- as.numeric(sub("HHIRev_SubInd_Q", "", df_HHIRev_long$Quarter))
+
+
+df_CR4Rev_long <- df_EBIT %>%
+  pivot_longer(
+    cols = starts_with("CR4Rev_Subind_Q"),
+    names_to = "Quarter",
+    values_to = "CR4Rev"
+  ) %>%
+  select(Name, GICS_SubInd, Quarter, CR4Rev)
+
+df_CR4Rev_long$Quarter <- as.numeric(sub("CR4Rev_Subind_Q", "", df_CR4Rev_long$Quarter))
+
+df_HHIMC_long <- df_EBIT %>%
+  pivot_longer(
+    cols = starts_with("HHIMC_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "HHIMC"
+  )  %>%
+  select(Name, GICS_SubInd, Quarter, HHIMC)
+
+df_HHIMC_long$Quarter <- as.numeric(sub("HHIMC_SubInd_Q", "", df_HHIMC_long$Quarter))
+
+
+df_CR4MC_long <- df_EBIT %>%
+  pivot_longer(
+    cols = starts_with("CR4MC_Subind_Q"),
+    names_to = "Quarter",
+    values_to = "CR4MC"
+  )  %>%
+  select(Name, GICS_SubInd, Quarter, CR4MC)
+
+df_CR4MC_long$Quarter <- as.numeric(sub("CR4MC_Subind_Q", "", df_CR4MC_long$Quarter))
+
+#mergins the dfs 
+
+EBIT_merg  <- df_EBIT_long %>%
+  left_join(df_HHIRev_long, by = c("Name", "GICS_SubInd", "Quarter")) %>%
+  left_join(df_CR4Rev_long, by = c("Name", "GICS_SubInd", "Quarter")) %>%
+  left_join(df_HHIMC_long, by = c("Name", "GICS_SubInd", "Quarter")) %>%
+  left_join(df_CR4MC_long, by = c("Name", "GICS_SubInd", "Quarter"))
+
+
+
+
+###starting with HHI REV
+
+reg10a <- lm(EBIT ~ HHIRev, data = EBIT_merg )
+
+### HHI highly significant, increase from 0 to 1 (maybe use 1-10000 scale instead)
+#results in increased profits of 9.97 Billion in the hypothetical case of fully concentrated markets
+# but very low explanatory value --> R-squared around 1 percent
+
+
+###doing the same with CR4 revenue
+
+reg10b <- lm(EBIT ~ CR4Rev, data = EBIT_merg )
+### same thing, higher CR4 higher profits, even lower R-squared below 1 percent
+
+
+###doing the same with HHI market cap
+
+reg10c <- lm(EBIT ~ HHIMC, data = EBIT_merg )
+### same stuff, but slightly highger R-squared 
+
+###doing the same with CR4 market cap    
+
+reg10d <- lm(EBIT ~ CR4MC, data = EBIT_merg )
+#same stuff
+
+stargazer(reg10a, reg10b, reg10c, reg10d, title="Naive Total Profits Regression Model",type = "text")
+
+# all models with very low explanatory power
+
+
+# let's check if this holds when doing a time fixed effects model
+
+#HHI_Rev
+reg11a <- lm(EBIT ~ HHIRev + Quarter, data = EBIT_merg )
+# still positive effect of market concentration on profits but still low explanability
+
+#CR4 Rev
+reg11b <- lm(EBIT ~ CR4Rev + Quarter, data = EBIT_merg )
+
+#HHI MC
+reg11c <- lm(EBIT ~ HHIMC + Quarter, data = EBIT_merg )
+### same stuff, but slightly highger R-squared 
+
+#CR4 market cap    
+reg11d <- lm(EBIT ~ CR4MC + Quarter, data = EBIT_merg )
+
+stargazer(reg11a, reg11b, reg11c, reg11d,  title = "Time-fixed regression model total profits",type = "text")
+# We can also check for two-way fixed effects
+
+#HHI_Rev
+reg12a <- lm(EBIT ~ HHIRev + Quarter + GICS_SubInd, data = EBIT_merg )
+# still positive effect of market concentration on profits but still low explanability
+
+#CR4 Rev
+reg12b <- lm(EBIT ~ CR4Rev + Quarter + GICS_SubInd, data = EBIT_merg )
+
+#HHI MC
+reg12c <- lm(EBIT ~ HHIMC + Quarter + GICS_SubInd, data = EBIT_merg )
+### same stuff, but slightly highger R-squared 
+
+#CR4 market cap    
+reg12d <- lm(EBIT ~ CR4MC + Quarter + GICS_SubInd, data = EBIT_merg )
+
+stargazer(reg12a, reg12b, reg12c, reg12d,  title = "Two-way fixed effects model total profits ",type = "text")
+
+
+```
+
+<div class = "answer">
+> Next we look at profit margins that are calculated on the basis for EBIT and Revenue. Few Columns with revenue = 0, NA were excluded because otherwise the profit margins become infinity. Running the same regression models on profits margins results once more in a statistically significant relationship between the concentration measures. However, this time it is negative. Nevertheless, again the models have very low R Squared value, which holds true when looking at the time-invariant effect and the two-way fixed effects model. All in all, market concentration explains only around 0.1 percent of the variation in profit margins.
+</div>
+
+
+```{r, fig.align="center"}
+#calculating profit margins
+
+##converting revenue values to long format
+
+df_REV_long <- df_wide %>%
+  pivot_longer(
+    cols = starts_with("REV_Q"),
+    names_to = "Quarter",
+    values_to = "REV"
+  ) %>%
+  select(Name, GICS_SubInd, Quarter, REV)
+
+#converting quarter to numeric
+df_REV_long$Quarter <- as.numeric(sub("Rev_Q", "", df_REV_long$Quarter))
+
+df_Profitmarg <- df_EBIT_long %>%
+  left_join(df_REV_long, by = c("Name", "GICS_SubInd", "Quarter"))
+
+#calculating profimarg.  round((df$EBIT / df$REV) * 100, 2)
+
+df_Profitmarg$Profitmarg <- ifelse(is.na(df_Profitmarg$REV) | is.na(df_Profitmarg$EBIT), NA, round((df_Profitmarg$EBIT / df_Profitmarg$REV) * 100, 2))
+
+
+df_Profitmarg <- df_Profitmarg %>%
+  left_join(df_HHIRev_long, by = c("Name", "GICS_SubInd", "Quarter"))
+
+df_Profitmarg <- df_Profitmarg %>%
+  left_join(df_CR4Rev_long, by = c("Name", "GICS_SubInd", "Quarter"))
+
+df_Profitmarg <- df_Profitmarg %>%
+  left_join(df_HHIMC_long, by = c("Name", "GICS_SubInd", "Quarter"))
+
+df_Profitmarg <- df_Profitmarg %>%
+  left_join(df_CR4MC_long, by = c("Name", "GICS_SubInd", "Quarter"))
+
+#### we have the problem that for some obervations are negative and positive infinity due to revenue being 0
+#in order to do a regression we have to exclude these observations
+
+df_Profitmarg <- df_Profitmarg[!df_Profitmarg$Profitmarg %in% c(-Inf, Inf),]
+
+
+#effect of HHIRev on Profitmarg
+reg13a <- lm(Profitmarg ~ HHIRev, data = df_Profitmarg, na.action = na.omit)
+summary(reg13a)
+#coefficient negative and extremely weak R squared
+
+#effect of CR4Rev on Profitmarg
+reg13b <- lm(Profitmarg ~ CR4Rev, data = df_Profitmarg, na.action = na.omit)
+##same negative coefficient an weak R squared
+
+#HHI MC
+reg13c <- lm(Profitmarg ~ HHIMC, data = df_Profitmarg, na.action = na.omit)
+#same  negative and weak
+
+#CR4 MC
+reg13d <- lm(Profitmarg ~ CR4MC, data = df_Profitmarg, na.action = na.omit)
+#again
+
+stargazer(reg13a, reg13b, reg13c, reg13d, title = "Naive Model Profit Margins firm level", type = "text") 
+
+### now we test again for the time fixed effect
+
+#effect of HHIRev on Profitmarg
+reg14a <- lm(Profitmarg ~ HHIRev + Quarter, data = df_Profitmarg, na.action = na.omit)
+summary(reg13a)
+
+#effect of CR4Rev on Profitmarg
+reg14b <- lm(Profitmarg ~ CR4Rev + Quarter, data = df_Profitmarg, na.action = na.omit)
+##same negative coefficient an weak R squared
+
+#HHI MC
+reg14c <- lm(Profitmarg ~ HHIMC + Quarter, data = df_Profitmarg, na.action = na.omit)
+
+#same  negative and weak
+
+#CR4 MC
+reg14d <- lm(Profitmarg ~ CR4MC + Quarter, data = df_Profitmarg, na.action = na.omit)
+#again
+
+stargazer(reg14a, reg14b, reg14c, reg14d, title = "Time-fixed Model Profit Margins firm level", type = "text") 
+
+
+### now we test again for the two-way fixed effects model
+
+#effect of HHIRev on Profitmarg
+reg15a <- lm(Profitmarg ~ HHIRev + Quarter + GICS_SubInd, data = df_Profitmarg, na.action = na.omit)
+summary(reg13a)
+
+#effect of CR4Rev on Profitmarg
+reg15b <- lm(Profitmarg ~ CR4Rev + Quarter + GICS_SubInd, data = df_Profitmarg, na.action = na.omit)
+##same negative coefficient an weak R squared
+
+#HHI MC
+reg15c <- lm(Profitmarg ~ HHIMC + Quarter + GICS_SubInd, data = df_Profitmarg, na.action = na.omit)
+
+#same  negative and weak
+
+#CR4 MC
+reg15d <- lm(Profitmarg ~ CR4MC + Quarter + GICS_SubInd, data = df_Profitmarg, na.action = na.omit)
+#again
+
+stargazer(reg15a, reg15b, reg15c, reg15d, title = "Two-way fixed effects Model Profit Margins firm level" ,type = "text") 
+# again very low explanitory value
+
+```
+
+
+<div class = "answer">
+<h2> **Testing Hypothesis 3**</h2>
+>In a preliminary step, the statistical relationship between market concentration and the size of digital markets was examined. Accordingly, firm level Revenue and Market Capitalisation figures were aggregated per Quarter and GICS Subindustry. In a time-fixed model (i.e., controlling for Quarter), the two MC concentration measures were regressed on aggregated Market Capitalization and, correspondingly, the two revenue-based concentration measures on aggregated revenue. The results show a clear statistical relationship between the variables: the more concentrated a market, the larger the aggregated revenue and market capitalization of a market. While all concentration measures are highly significant, it is again market capitalization that serves as the better predictor of market size (in particular HHI MC). While this represents merely a naive model, the adjusted R-squared values show (HHI REv 0.066, CR4 Rev  0.031, HHI MC 0.296 (!), CR4 MC 0.045) give a clear indication that market concentration as a competition problem is more pronounced in large markets. The relationship between the size of a market and market concentration represents a good opportunity for futher, more in-depth research!
+</div>
+
+```{r, fig.align="center"}
+#Testing Hypothesis 3:
+#Preleminary Analysis: Reduced market concentration has a statistical effect on the growth of China’s digital economy.
+
+# Building a new data set with the aggregate revenue and market cap values per subindustry 
+
+
+# sum the market cap and revenue by subindustry and quarter
+df_grow <- aggregate(cbind(MC_Q1, MC_Q2, MC_Q3, MC_Q4, MC_Q5, MC_Q6, MC_Q7, MC_Q8, MC_Q9,
+                          MC_Q10, MC_Q11, MC_Q12, MC_Q13, MC_Q14, MC_Q15, MC_Q16, Rev_Q1,
+                          Rev_Q2, Rev_Q3, Rev_Q4, Rev_Q5, Rev_Q6, Rev_Q7, Rev_Q8, Rev_Q9,
+                          Rev_Q10, Rev_Q11, Rev_Q12, Rev_Q13, Rev_Q14, Rev_Q15, Rev_Q16) ~ GICS_SubInd, data = df_wide, sum)
+
+
+
+
+
+#starting with revenue concentration measures
+
+
+df_grow_Rev  <-  merge(df_grow, df_wide[, c("GICS_SubInd", "HHIRev_SubInd_Q1", "HHIRev_SubInd_Q2", "HHIRev_SubInd_Q3",
+                                      "HHIRev_SubInd_Q4",  "HHIRev_SubInd_Q5",  "HHIRev_SubInd_Q6",  "HHIRev_SubInd_Q7", 
+                                      "HHIRev_SubInd_Q8",  "HHIRev_SubInd_Q9",  "HHIRev_SubInd_Q10", "HHIRev_SubInd_Q11", "HHIRev_SubInd_Q12",
+                                       "HHIRev_SubInd_Q13", "HHIRev_SubInd_Q14", "HHIRev_SubInd_Q15", "HHIRev_SubInd_Q16", "CR4Rev_Subind_Q1", 
+                                       "CR4Rev_Subind_Q2",  "CR4Rev_Subind_Q3",  "CR4Rev_Subind_Q4",  "CR4Rev_Subind_Q5",  "CR4Rev_Subind_Q6", 
+                                       "CR4Rev_Subind_Q7",  "CR4Rev_Subind_Q8",  "CR4Rev_Subind_Q9",  "CR4Rev_Subind_Q10", "CR4Rev_Subind_Q11",
+                                      "CR4Rev_Subind_Q12", "CR4Rev_Subind_Q13", "CR4Rev_Subind_Q14", "CR4Rev_Subind_Q15", "CR4Rev_Subind_Q16")], by = "GICS_SubInd", all.x = TRUE)
+
+#dropping non unique values
+df_grow_Rev <- df_grow_Rev[!duplicated(df_grow_Rev[, c("GICS_SubInd")]), ] 
+
+
+#transforming into long format
+
+df_grow_1 <- df_grow_Rev %>%
+  pivot_longer(
+    cols = starts_with("Rev_Q"),
+    names_to = "Quarter",
+    values_to = "Rev"
+  ) %>%
+  select(GICS_SubInd, Quarter, Rev)
+
+df_grow_1$Quarter <- as.numeric(gsub("Rev_Q", "", df_grow_1$Quarter))
+
+df_grow_2 <- df_grow_Rev %>%
+  pivot_longer(
+    cols = starts_with("HHIRev_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "HHIRev"
+  ) %>%
+  select(GICS_SubInd, Quarter, HHIRev)
+
+df_grow_2$Quarter <- as.numeric(gsub("HHIRev_SubInd_Q", "", df_grow_2$Quarter))
+
+df_grow_3 <- df_grow_Rev %>%
+  pivot_longer(
+    cols = starts_with("CR4Rev_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "CR4Rev"
+  ) %>%
+  select(GICS_SubInd, Quarter, CR4Rev)
+
+df_grow_3$Quarter <- as.numeric(gsub("CR4Rev_Subind_Q", "", df_grow_3$Quarter))
+
+
+dfgrow_Rev_long <- merge(merge(df_grow_1, df_grow_2, by = c("Quarter", "GICS_SubInd"), all = TRUE), 
+                           df_grow_3, by = c("Quarter", "GICS_SubInd"), all = TRUE)
+                    
+## now we look at the effect of market concentration on total numbers of Revenue
+
+reg16a <- lm(Rev ~ HHIRev + Quarter , data = dfgrow_Rev_long)
+#summary(reg16a)
+
+# the time-fxied regression model( when controlling for Quarter) shows the influence of HHI (Rev) on Total Revenue is highly significant
+# the higher the market concentration, the higher the revenue of a market (???)
+
+
+reg16b <- lm(Rev ~ CR4Rev + Quarter , data = dfgrow_Rev_long)
+#summary(reg16b)
+#CR4 also has a positive coefficient but is not significant
+
+
+### now we are doing the same for market cap concentration measures
+
+df_grow_MC  <-  merge(df_grow, df_wide[, c("GICS_SubInd",  "HHIMC_SubInd_Q1",   "HHIMC_SubInd_Q2",   "HHIMC_SubInd_Q3",   "HHIMC_SubInd_Q4",   "HHIMC_SubInd_Q5",  
+                                            "HHIMC_SubInd_Q6",   "HHIMC_SubInd_Q7",   "HHIMC_SubInd_Q8",   "HHIMC_SubInd_Q9",   "HHIMC_SubInd_Q10", 
+                                            "HHIMC_SubInd_Q11",  "HHIMC_SubInd_Q12",  "HHIMC_SubInd_Q13",  "HHIMC_SubInd_Q14",  "HHIMC_SubInd_Q15", 
+                                            "HHIMC_SubInd_Q16",  "CR4MC_Subind_Q1",   "CR4MC_Subind_Q2",   "CR4MC_Subind_Q3",   "CR4MC_Subind_Q4",  
+                                            "CR4MC_Subind_Q5",   "CR4MC_Subind_Q6",   "CR4MC_Subind_Q7",   "CR4MC_Subind_Q8",   "CR4MC_Subind_Q9",  
+                                            "CR4MC_Subind_Q10",  "CR4MC_Subind_Q11",  "CR4MC_Subind_Q12",  "CR4MC_Subind_Q13",  "CR4MC_Subind_Q14", "CR4MC_Subind_Q15", "CR4MC_Subind_Q16")], by = "GICS_SubInd", all.x = TRUE)
+
+
+#dropping non unique values
+df_grow_MC <- df_grow_MC[!duplicated(df_grow_MC[, c("GICS_SubInd")]), ] 
+
+
+#transforming into long format
+
+
+df_grow_4 <- df_grow_MC %>%
+  pivot_longer(
+    cols = starts_with("MC_Q"),
+    names_to = "Quarter",
+    values_to = "MC"
+  ) %>%
+  select(GICS_SubInd, Quarter, MC)
+
+df_grow_4$Quarter <- as.numeric(gsub("MC_Q", "", df_grow_4$Quarter))
+
+
+df_grow_5 <- df_grow_MC %>%
+  pivot_longer(
+    cols = starts_with("HHIMC_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "HHIMC"
+  ) %>%
+  select(GICS_SubInd, Quarter, HHIMC)
+
+df_grow_5$Quarter <- as.numeric(gsub("HHIMC_SubInd_Q", "", df_grow_5$Quarter))
+
+df_grow_6 <- df_grow_MC %>%
+  pivot_longer(
+    cols = starts_with("CR4MC_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "CR4MC"
+  ) %>%
+  select(GICS_SubInd, Quarter, CR4MC)
+
+df_grow_6$Quarter <- as.numeric(gsub("CR4MC_Subind_Q", "", df_grow_6$Quarter))
+
+#merging MC data sets
+dfgrow_MC_long <- merge(merge(df_grow_4, df_grow_5, by = c("Quarter", "GICS_SubInd"), all = TRUE), 
+                         df_grow_6, by = c("Quarter", "GICS_SubInd"), all = TRUE)
+
+#regression market concentration variables on total MC with Quarter as control
+
+reg16c <- lm(MC ~ HHIMC + Quarter , data = dfgrow_MC_long)
+#summary(reg16c)
+
+# same thing: even when controlling for Quarter, the influence of HHI (MC) on Total Revenue is highly significant
+# the higher the market concentration, the higher the MC of a market 
+
+
+reg16d <- lm(MC ~ CR4MC + Quarter , data = dfgrow_MC_long)
+#summary(reg16d)
+
+## this time CR4 concentration measure is also significant, even highly!!!
+
+#conclusion Larger markets are more concentrated
+
+
+stargazer(reg16a, reg16b, reg16c, reg16d, title = "Naive Model Market Concentration and Market Size", type = "text") 
+
+```
+
+<div class = "answer">
+> Moving on to the main anlysis, the effect of the new regulatory approach on growth rates was tested (1) one the aggregated market level and (2) on the firm level.
+When plotting the calculating growth rates per GICS subindustry we can observe a general negative trend for market capitalisation growth rates and a cyclical yet stable trajectory for revenue growth rates. In all cases, no abnormal patterns can be observed around the cut off with the notable exception of the 45102020 subindustry (Data Processing & Outsourced Services) that is dropping off dramatically in quarter 9 before quickly rebounding in the market capitalisation graph. 
+A time-fixed model shows so significant treatment effect for either market cap or revenue growth rates. An interaction term for the different market concentration measures was included to test whether a part of the treatment effect was mediated by market concentratino with no significant results.
+</div>
+
+```{r, fig.align="center"}
+#####no we calculate the growth rates
+
+df_growthrateMC <- df_grow_4  %>% 
+  group_by(GICS_SubInd) %>% 
+  mutate(Growth_MC = (MC - lag(MC))/lag(MC)) %>% 
+  select(GICS_SubInd, Quarter, Growth_MC)
+
+df_growthrateRev <- df_grow_1  %>% 
+  group_by(GICS_SubInd) %>% 
+  mutate(Growth_Rev = (Rev - lag(Rev))/lag(Rev)) %>% 
+  select(GICS_SubInd, Quarter, Growth_Rev)
+
+#merging MC data sets
+dfgrow_MC_long <- merge(dfgrow_MC_long, df_growthrateMC, by = c("Quarter", "GICS_SubInd"), all = TRUE)
+
+
+#merging Rev data sets
+dfgrow_Rev_long <- merge(dfgrow_Rev_long, df_growthrateRev, by = c("Quarter", "GICS_SubInd"), all = TRUE)
+
+
+##### Let's plot growth rates of Market Cap and Rev
+
+ggplot(dfgrow_MC_long, aes(x = Quarter, y = Growth_MC, group = GICS_SubInd, color = GICS_SubInd)) +
+  geom_line() +
+  labs(x = "Quarter", y = "Growthrate Market Cap", color = "GICS Subindustry") +
+  geom_vline(xintercept = 8, linetype = "dotted") +
+  ggtitle("Market Capitalisation Growthrate per GICS Subindustry") +
+  theme_minimal()
+###very confusing, one cant really detect any patterns
+###sharp decline only in 1 GICS subindustry: 45102020 --> Data Processing & Outsourced Services 
+
+
+ggplot(dfgrow_Rev_long , aes(x = Quarter, y = Growth_Rev, group = GICS_SubInd, color = GICS_SubInd)) +
+  geom_line() +
+  labs(x = "Quarter", y = "Growthrate Revenze", color = "GICS Subindustry") +
+  geom_vline(xintercept = 8, linetype = "dotted") +
+  ggtitle("Revenue Growthrate per GICS Subindustry") +
+  theme_minimal()
+
+### first we test the concentration measures (controlled for Quarter) as a predictor on growth rates
+
+#first 2 concentration measures for market cap in a time-fixed model
+
+reg17a <- lm(Growth_MC ~ HHIMC + Quarter , data = dfgrow_MC_long)
+#summary(reg17a)
+### no significant effect of HHI (MC) on Market Cap growth rate when controlling for Quarter (same if we remove Quarter)
+
+reg17b <- lm(Growth_MC ~ CR4MC + Quarter , data = dfgrow_MC_long)
+#summary(reg10)
+# same when testing for CR4
+
+# now for the 2 concentration measures for revenue
+reg17c <- lm(Growth_Rev ~ HHIRev + Quarter , data = dfgrow_Rev_long)
+#summary(reg17c)
+### no significant effect 
+
+reg17d <- lm(Growth_Rev ~ CR4Rev + Quarter , data = dfgrow_Rev_long)
+#summary(reg12)
+## also no significant coefficient
+
+### at the subindustry market level there is no statistical significant effect
+
+#stargazer(reg17a, reg17b, reg17c, reg17d, title = "Time-fixed Model Market Concentration Profit Margins Aggregate Market Level", type = "text")
+
+# Now we test the treatment effect of the regulatory approach by including a dummy variable
+#adding treatment variable
+
+dfgrow_Rev_long$treatment <- ifelse(dfgrow_Rev_long$Quarter >= 9, 1, 0)
+
+dfgrow_MC_long$treatment <- ifelse(dfgrow_MC_long$Quarter >= 9, 1, 0)
+
+#2 time fixed effects model to test treatment effect
+#REV
+
+reg18a <- lm(Growth_Rev ~  Quarter + treatment, data = dfgrow_Rev_long)
+
+#MC
+
+reg18b <- lm(Growth_MC ~  Quarter + treatment, data = dfgrow_MC_long)
+#summary(reg18b)
+#no significant treatment effect
+
+stargazer(reg18a, reg18b, title = "Time fixed effects Model Profit Margins Aggregate Market Level",type = "text")
+
+
+
+#2  inclduing interaction term for treatment and market concentration to test for effect mediated by market concentration
+#HHIREV
+
+#HHI Rev
+reg18c <- lm(Growth_Rev ~ HHIRev + Quarter + treatment + HHIRev*treatment, data = dfgrow_Rev_long)
+
+#no significant results
+
+#CR4 Rev
+
+reg18d <- lm(Growth_Rev ~ CR4Rev + Quarter + treatment + CR4Rev*treatment, data = dfgrow_Rev_long)
+
+#not significant
+
+
+#HHI MC
+
+reg18e <- lm(Growth_MC ~ HHIMC + Quarter + treatment + HHIMC*treatment, data = dfgrow_MC_long)
+
+#no significant treatment effect
+
+#CR4 MC
+reg18f <- lm(Growth_MC ~ CR4MC  + Quarter + treatment + + CR4MC*treatment, data = dfgrow_MC_long)
+
+
+
+stargazer(reg18c, reg18d, reg18e, reg18f, title = "Time fixed effects Model Profit Margins Aggregate Market Level with interaction term",type = "text")
+
+```
+
+<div class = "answer">
+>  For the firm level the growth rates were calculated on the same basis (again excluding columns with missing revenue or revenue = 0). This time a two-way fixed effects was employed controlling for quarter and GICS subindustry. Only the market capitalization models ascertains a small positive treatment effect at the 95 percent significance level. When introcuding an interaction term for the different market concentration measures,the interaction itself is never significant but the treatment effect remains significant in the HHI MC model.However, the explanatory value is relatively low at 1,5 percent. For future reasearch, it would be very interesting to build a more accurate model that incorporates all relevant predictors of growth rate identified by the literature. This would allow us to obtain a better understanding of the predictory power of  market concentration and the new regulatory approach. That being said, there is no indication of a negative effect of the regulatory approach on firm growth rates, which is an important result in itself.
+</div>
+
+```{r, fig.align="center"}
+### we can also do that on firm level
+
+# in order to do that we need to calculate the growth rate for revenue and market cap
+
+#transforming df_wide into long
+
+
+
+dflong1 <- df_wide %>%
+  pivot_longer(
+    cols = starts_with("Rev_Q"),
+    names_to = "Quarter",
+    values_to = "Rev"
+  ) %>%
+  select(Name, GICS_SubInd, Quarter, Rev)
+
+dflong1$Quarter <- as.numeric(gsub("Rev_Q", "", dflong1$Quarter))
+
+dflong2 <- df_wide %>%
+  pivot_longer(
+    cols = starts_with("HHIRev_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "HHIRev"
+  ) %>%
+  select(Name, GICS_SubInd, Quarter, HHIRev)
+
+dflong2$Quarter <- as.numeric(gsub("HHIRev_SubInd_Q", "", dflong2$Quarter))
+
+dflong3 <- df_wide %>%
+  pivot_longer(
+    cols = starts_with("CR4Rev_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "CR4Rev"
+  ) %>%
+  select(Name, GICS_SubInd, Quarter, CR4Rev)
+
+dflong3$Quarter <- as.numeric(gsub("CR4Rev_Subind_Q", "", dflong3$Quarter))
+
+dflong4 <- df_wide %>%
+  pivot_longer(
+    cols = starts_with("MC_Q"),
+    names_to = "Quarter",
+    values_to = "MC"
+  ) %>%
+  select(Name, GICS_SubInd, Quarter, MC)
+
+dflong4$Quarter <- as.numeric(gsub("MC_Q", "", dflong4$Quarter))
+
+
+dflong5 <- df_wide %>%
+  pivot_longer(
+    cols = starts_with("HHIMC_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "HHIMC"
+  ) %>%
+  select(Name, GICS_SubInd, Quarter, HHIMC)
+
+dflong5$Quarter <- as.numeric(gsub("HHIMC_SubInd_Q", "", dflong5$Quarter))
+
+dflong6 <- df_wide %>%
+  pivot_longer(
+    cols = starts_with("CR4MC_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "CR4MC"
+  ) %>%
+  select(Name, GICS_SubInd, Quarter, CR4MC)
+
+dflong6$Quarter <- as.numeric(gsub("CR4MC_Subind_Q", "", dflong6$Quarter))
+
+
+#joining long data sets
+
+dfgrowthrates <- left_join(dflong1, dflong2, by = c("Name", "GICS_SubInd", "Quarter")) %>%
+  left_join(dflong3, by = c("Name", "GICS_SubInd", "Quarter")) %>%
+  left_join(dflong4, by = c("Name", "GICS_SubInd", "Quarter")) %>%
+  left_join(dflong5, by = c("Name", "GICS_SubInd", "Quarter")) %>%
+  left_join(dflong6, by = c("Name", "GICS_SubInd", "Quarter"))
+
+#calculating growth rates of Rev and MC firm level
+
+dfgrowthrates <- dfgrowthrates %>%
+  arrange(Name, Quarter) %>%
+  group_by(Name) %>%
+  mutate(
+    GrowthR_MC = (MC - lag(MC)) / lag(MC),
+    GrowthR_Rev = (Rev - lag(Rev)) / lag(Rev)
+  )
+
+# now we add the treatment
+
+dfgrowthrates$treatment <- ifelse(dfgrowthrates$Quarter >= 9, 1, 0)
+
+#again get rid of the infinity results
+dfgrowthrates <- dfgrowthrates[!dfgrowthrates$GrowthR_Rev %in% c(-Inf, Inf),]
+dfgrowthrates <- dfgrowthrates[!dfgrowthrates$GrowthR_MC %in% c(-Inf, Inf),]
+
+### now we can do our two way fixed effects model
+
+# Rev
+reg19a <- lm(GrowthR_Rev ~  GICS_SubInd + Quarter + treatment, data = dfgrowthrates)
+#summary(reg19a)
+#### no significance
+
+#MC
+reg19b <- lm(GrowthR_MC ~  GICS_SubInd + Quarter + treatment, data = dfgrowthrates)
+#summary(reg19b)
+
+stargazer(reg19a, reg19b,  title="Two-way fixed effcts Treament Profit Margins Firm Level", type = "text")
+### we get a positive treatment effect for MC
+
+
+# Let's test for interaction effect with market concentration to see what part is mediated through a change in market concentration
+
+
+#HHI Rev
+reg19c <- lm(GrowthR_Rev ~ HHIRev + GICS_SubInd + Quarter + treatment + HHIRev*treatment, data = dfgrowthrates)
+#summary(reg19c)
+
+
+#CR4 Rev
+reg19d <- lm(GrowthR_Rev ~ CR4Rev + GICS_SubInd + Quarter + treatment + CR4Rev*treatment, data = dfgrowthrates)
+#summary(reg19d)
+
+
+#HHIMC
+reg19e <- lm(GrowthR_MC ~ HHIMC + GICS_SubInd + Quarter + treatment + HHIMC*treatment, data = dfgrowthrates)
+#summary(reg19e)
+
+#CR4 MC
+reg19f <- lm(GrowthR_MC ~ CR4MC + GICS_SubInd + Quarter + treatment + CR4MC*treatment, data = dfgrowthrates)
+#summary(reg19f)
+
+
+stargazer(reg19c, reg19d, reg19e, reg19f, title="Two-way fixed effcts with Interaction Term Profit Margins Firm Level", type = "text")
+
+```
+
+
+
+<div class = "answer">
+<h2> **Testing Hypothesis 4**</h2>
+>  
+</div>
+
+```{r, fig.align="center"}
+### firms entering/leaving the market is approximated by difference in listed firms
+#working with NAs here
+
+###Overview NA's for market cap
+
+df_na <- df_wide %>% select(4:19)
+
+# count the number of NAs by variable
+na_counts <- colSums(is.na(df_na))
+na_counts
+
+#ok let's get the actual df with all relevant variables
+
+df_NA <- df_wide %>% select(2:19, 84:115)
+
+#converting it too long format 
+
+df_NA_long1 <- df_NA %>%
+  pivot_longer(
+    cols = starts_with("MC_Q"),
+    names_to = "Quarter",
+    values_to = "MC"
+  ) %>%
+  select(Name, GICS_SubInd, Quarter, MC)
+
+df_NA_long1$Quarter <- as.numeric(gsub("MC_Q", "", df_NA_long1$Quarter))
+
+
+#transforming df so it contains NAs for MC per Quarter and Subindustry
+
+df_NA_long1 <- df_NA_long1 %>% 
+  group_by(GICS_SubInd, Quarter) %>% 
+  summarize(Missing_MC = sum(is.na(MC)))
+
+#creating df for MCHHI
+
+df_NA_long2 <- df_NA[!duplicated(df_NA[, c("GICS_SubInd")]), ] 
+
+df_NA_long2 <- df_NA_long2 %>%
+  pivot_longer(
+    cols = starts_with("HHIMC_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "HHIMC"
+  ) %>%
+  select(GICS_SubInd, Quarter, HHIMC)
+
+df_NA_long2$Quarter <- as.numeric(gsub("HHIMC_SubInd_Q", "", df_NA_long2$Quarter))
+
+#getting CR4MC
+
+df_NA_long3 <- df_NA[!duplicated(df_NA[, c("GICS_SubInd")]), ] 
+
+df_NA_long3 <- df_NA_long3 %>%
+  pivot_longer(
+    cols = starts_with("CR4MC_SubInd_Q"),
+    names_to = "Quarter",
+    values_to = "CR4MC"
+  ) %>%
+  select(GICS_SubInd, Quarter, CR4MC)
+
+df_NA_long3$Quarter <- as.numeric(gsub("CR4MC_Subind_Q", "", df_NA_long3$Quarter))
+
+
+###merging data sets
+
+df_NA_long <- merge(merge(df_NA_long1, df_NA_long2, by = c("Quarter", "GICS_SubInd"), all = TRUE), df_NA_long3, by = c("Quarter", "GICS_SubInd"), all = TRUE)
+
+df_NA_long <- df_NA_long %>% arrange(Quarter)
+
+# Calculate the change in missing values by subindustry and quarter
+df_NA_long <- df_NA_long %>%
+  group_by(GICS_SubInd) %>%
+  mutate(NewFirms = Missing_MC - lag(Missing_MC)) %>%
+  mutate(NewFirms =  -1 * NewFirms)   %>%
+  ungroup()
+
+#  Plot the data using ggplot2
+ggplot(df_NA_long, aes(x = Quarter, y = NewFirms, group = GICS_SubInd, color = GICS_SubInd)) +
+  geom_line() +
+  labs(x = "Quarter", y = "New Firms", color = "GICS Subindustry") +
+  geom_vline(xintercept = 8, linetype = "dotted") +
+  ggtitle("Firms entering the Market") +
+  theme_minimal()
+#no real patterns detectable but there are some dropoffs around the cutoff
+
+
+### regression time first only looking at HHIMC on new firms
+
+reg20a <- lm(NewFirms ~ HHIMC, data = df_NA_long)
+#summary(reg20a)
+
+reg20b <- lm(NewFirms ~ CR4MC, data = df_NA_long)
+#summary(reg20b)
+
+#stargazer(reg20a, reg20b, title="Naive Regression Market Concentration New Firms", type = "text")
+#the higher the HHI and market concentration, the lower the number of new (listed) firms entering the market
+#-->highly significant effect
+#-->adj r-squared at around 7 percent
+
+#now checking for time-fixed effect
+
+reg20c <- lm(NewFirms ~ HHIMC + Quarter, data = df_NA_long)
+#summary(reg20c)
+
+reg20d <- lm(NewFirms ~ CR4MC + Quarter, data = df_NA_long)
+#summary(reg20d)
+
+stargazer(reg20a, reg20b, reg20c, reg20d, title="Relationship Market Concentration New Firms", type = "text")
+
+
+
+#now checking for treatment effect in a time fixed effects model
+df_NA_long$treatment <- ifelse(df_NA_long$Quarter >= 9, 1, 0)
+
+reg21a <- lm(NewFirms ~  Quarter + treatment, data = df_NA_long)
+#summary(reg21a)
+# relevant positive treatment effect
+
+reg21b <- lm(NewFirms ~ Quarter + treatment, data = df_NA_long)
+
+# now we introduce market concentration as a control variable
+
+reg21c <- lm(NewFirms ~ HHIMC + Quarter + treatment, data = df_NA_long)
+#summary(reg21c)
+# relevant positive treatment effect
+
+reg21d <- lm(NewFirms ~ CR4MC + Quarter + treatment, data = df_NA_long)
+#summary(reg21d)
+
+stargazer(reg21a, reg21b, reg21c, reg21d, title="Time-fixed Regression Model with Concentration as Control", type = "text")
+
+```
+
+
+<div class = "answer">
+>  In this section we do some robustness checks for our two models. In conclusion,  we can establish that market concentration is a strong predicator of the number of new firms regardless of model. The higher the market concentration, the fewer firms enter the market. Second, the plots and the different regressions point to a small positive treatment effect. However, the robustness checks show that the regression models are exposed to a high degree of heteroskedasticity. Neither loging the dependant variable nor using a higher polynomial for quarter fixes the issues. When trying to control for this with an interaction term between quarter and treatment, the interaction istelf, but not the treatment effect is significant. Ultimately, the results are inconclusive.
+</div>
+
+```{r, fig.align="center"}
+
+#first I  remove all quarter 1 values because they all have NAs
+
+df_NA_long <- df_NA_long %>% 
+  filter(Quarter != 1)
+
+
+# Add predicted values to the data frame
+df_NA_long$predictedHHI <- predict(reg21a)
+df_NA_long$predictedCR4 <- predict(reg21b)
+
+
+# Create line plot of actual and predicted values across quarters for HHI MC Model
+ggplot(data = na.omit(df_NA_long), aes(x = Quarter, y = NewFirms, group = GICS_SubInd)) +
+  geom_line(aes(color = "Actual")) +
+  geom_line(aes(y = predictedHHI, color = "PredictedHHI")) +
+  scale_color_manual(values = c("Actual" = "black", "PredictedHHI" = "red")) +
+  labs(x = "Quarter", y = "NewFirms", title = "Regression Model Performance HHI MC")
+
+
+# Create line plot of actual and predicted values across quarters for CR4 MC Model
+ggplot(data = na.omit(df_NA_long), aes(x = Quarter, y = NewFirms, group = GICS_SubInd)) +
+  geom_line(aes(color = "Actual")) +
+  geom_line(aes(y = predictedCR4, color = "PredictedCR4")) +
+  scale_color_manual(values = c("Actual" = "black", "PredictedCR4" = "red")) +
+  labs(x = "Quarter", y = "NewFirms", title = "Regression Model Performance CR4 MC")
+
+## that doesn't look too god
+
+#### testing for Linearity
+
+#HHI MC model
+# Plotting fitted values against residuals
+plot(reg21a, 1)
+#spread of the residuals increases as the predicted values increase thereby indicating that the variances of the residuals are not constant across the range of the data. 
+
+#CR4 MC model
+# Plotting fitted values against residuals
+plot(reg21b, 1)
+#same problem applies
+
+
+#testing for homosecasticity
+
+#HHI MC 
+
+bp_HHI <- bptest(reg21a)
+bp_HHI 
+#based on the results, there is evidence of heteroscedasticity in the regression mode
+
+#CR4 MC 
+
+bp_CR4 <- bptest(reg21b)
+bp_CR4 
+## same here
+
+
+### let's test different approach to deal with  heteroscedasticity 
+
+#first let make Quarter not linear but quadratic
+
+r1HHI <-  lm(NewFirms ~ HHIMC + Quarter^2 + treatment, data = df_NA_long)
+r1CR4 <-  lm(NewFirms ~ CR4MC + Quarter^2 + treatment, data = df_NA_long)
+
+#now redo the test
+bp_HHI_robust <- bptest(r1HHI)
+bp_HHI_robust 
+#has not changed anything
+
+bp_CR4_robust <- bptest(r1CR4)
+bp_CR4_robust 
+#doesn't work
+
+### we can't log the dependant variable because there are some negative values
+
+#another option is to estimate different slopes for the treatment levels in the regression model with interaction term between the treatment variable and the Quarter variable. This will allow the slope of the Quarter variable to vary depending on the treatment level. 
+
+r2HHI <-  lm(NewFirms ~ HHIMC + Quarter + treatment + Quarter*treatment, data = df_NA_long)
+r2CR4 <-  lm(NewFirms ~ CR4MC + Quarter + treatment + Quarter*treatment, data = df_NA_long)
+
+summary(r2HHI)
+
+summary(r2CR4)
+
+#in both cases, the treatment effect is no longer significant. Based on the p-value for the treatment variable, it does not have a significant effect on the number of NewFirms. However, the interaction term "Quarter:treatment" is significant, which means that the effect of treatment on NewFirms depends on the quarter. Therefore, it is important to examine the coefficients for the treatment variable for each quarter separately to determine if there is a significant effect.
+
+#first let's see if there is still evidence of heteroscedasticity in the regression model
+
+df_NA_long$predictedHHInew <- predict(r2HHI)
+
+# Create line plot of actual and predicted values across quarters for new HHI MC Model
+ggplot(data = na.omit(df_NA_long), aes(x = Quarter, y = NewFirms, group = GICS_SubInd)) +
+  geom_line(aes(color = "Actual")) +
+  geom_line(aes(y = predictedHHI, color = "PredictedHHInew")) +
+  scale_color_manual(values = c("Actual" = "black", "PredictedHHInew" = "red")) +
+  labs(x = "Quarter", y = "NewFirms", title = " HHI MC Model With interaction effect")
+
+df_NA_long$predictedCR4new <- predict(r2CR4)
+
+# Create line plot of actual and predicted values across quarters for new CR4 MC Model
+ggplot(data = na.omit(df_NA_long), aes(x = Quarter, y = NewFirms, group = GICS_SubInd)) +
+  geom_line(aes(color = "Actual")) +
+  geom_line(aes(y = predictedHHI, color = "PredictedCR4new")) +
+  scale_color_manual(values = c("Actual" = "black", "PredictedCR4new" = "red")) +
+  labs(x = "Quarter", y = "NewFirms", title = " CR4 MC Model With interaction effect")
+
+
+bp_r2HHI <- bptest(r1HHI)
+bp_r2HHI
+#has not changed anything
+
+bp_r2CR4 <- bptest(r2CR4)
+bp_r2CR4 
+#same here
+
+#Last try: Recoding the Quarter Variable as Character so we get an interaction effect for each quarter
+
+#turning Quarter into character variable
+df_NA_long$Quarter_char <- paste0("Q", df_NA_long$Quarter)
+
+#new regerssion with interaction term with character quarter variable
+
+r3HHI <-  lm(NewFirms ~ HHIMC + Quarter_char + treatment + Quarter_char*treatment, data = df_NA_long)
+summary(r3HHI)
+
+# issue with NAs arises from having too many interaction terms. When Quarter is converted to a character variable, each unique quarter value becomes its own level, which leads to a large number of levels for the interaction terms. This can cause problems with collinearity and the model may become overspecified.
+
+#let's see if the same issue applies to CR4 MC model
+
+r3CR4 <-  lm(NewFirms ~ CR4MC + Quarter_char + treatment + Quarter_char*treatment, data = df_NA_long)
+summary(r3CR4)
+#same issue
+
+#in conclusion we can be sure that market concentration is a strong predicator of number of new firms regardless of model. The higher the market concentration, the fewer firms enter the market. Second, the plots and the different regressions point to a small positive treatment effect. However, the regression model is exposed to multicollinearity. When trying to control for this with an interaction term, the interaction istelf, but not the treatment effect is significant. Ultimately, the results are inconclusive.
+
+
+
+
+```
+
+
+
+
